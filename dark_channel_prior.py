@@ -34,5 +34,6 @@ class DarkChannelPrior:
     def dehaze(self, img):
         dark = self.dark_channel(img)
         A = self.get_atmosphere(img, dark)
+        print(A)
         print(dark.shape, A.shape)
-        return self.get_transmission(img, A)
+        return A, self.get_transmission(img, A)

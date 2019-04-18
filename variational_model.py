@@ -24,8 +24,8 @@ class VariationalModel(object):
        tmp_h = np.maximum(np.abs(former_h) - latter, 0.0)
        tmp_v = np.maximum(np.abs(former_v) - latter, 0.0)
 
-       dh = cv2.divide(former_h, np.abs(former_h)) * tmp_h
-       dv = cv2.divide(former_v, np.abs(former_v)) * tmp_v
+       dh = np.sign(former_h) * tmp_h
+       dv = np.sign(former_v) * tmp_v
 
        return dh, dv
 
@@ -42,13 +42,8 @@ class VariationalModel(object):
 
         bh = np.zeros((H, W), dtype=np.float32)
         bv = np.zeros((H, W), dtype=np.float32)
-        dh = np.zeros((H, W), dtype=np.float32)
-        dv = np.zeros((H, W), dtype=np.float32)
         vh = np.zeros((H, W), dtype=np.float32)
         vv = np.zeros((H, W), dtype=np.float32)
-
-        phi1 = np.zeros((H, W), dtype=np.float32)
-        phi2 = np.zeros((H, W), dtype=np.float32)
 
         F_conj_h = PD.psf2otf(np.expand_dims(np.array([1, -1]), axis=1), img.shape[:2]).conjugate()                 # FFT derivative operateor horizontal
         F_conj_v = PD.psf2otf(np.expand_dims(np.array([1, -1]), axis=1).T, img.shape[:2]).conjugate()               # FFT derivative operateor verical
@@ -60,46 +55,47 @@ class VariationalModel(object):
             dh, dv = self.shrinkage(R, bh, bv, self.lam1)
             phi1 = F_conj_h * np.fft.fft2(dh - bh) + F_conj_v * np.fft.fft2(dv - bv)
             # Step2.
-            top = np.fft.fft2(img/np.maximum(T, 0.3)) + self.alpha * self.lam1 * phi1
+            tmp = img / np.maximum(T, 0.3)
+            top = np.fft.fft2(tmp) + self.alpha * self.lam1 * phi1
             bottom = F_delta + self.alpha * self.lam1 * F_div
             R = np.real(np.fft.ifft2(top / bottom))
-            #R = R.astype(dtype=np.uint8)
             # Step3.
             bh, bv = self.diff(R, bh, bv, dh, dv)
             R = np.maximum(R, img)
-            print(np.max(R))
-
             # Step4.
             uh, uv = self.shrinkage(T, vh, vv, self.lam2)
             phi2 = F_conj_h * np.fft.fft2(uh - vh) + F_conj_v * np.fft.fft2(uv - vv)
-            top = np.fft.fft2(img/(R + 1.0)) + self.beta * self.lam2 * phi2
+            top = np.fft.fft2(img/(R + 0.001)) + self.beta * self.lam2 * phi2
             bottom = F_delta + self.beta * self.lam2 * F_div
             T = np.real(np.fft.ifft2(top / bottom))
-
             # Step5.
             vh, vv = self.diff(T, vh, vv, uh, uv)
-
             T = np.maximum(np.minimum(T, 1.0), 0.0)
             count += 1
-
             #cv2.imshow("result", R.astype(dtype=np.uint8))
-            #cv2.imshow("T", T)
+            cv2.imshow("T", T)
             cv2.waitKey(0)
-
-        return R.astype(dtype=np.uint8), T
+        return R, T
 
 if __name__ == '__main__':
-    img = cv2.imread("016.bmp")
+    img = cv2.imread("09.bmp")
     img = img.astype(dtype=np.float32)
-    inital_transmission = DCP.DarkChannelPrior(wsize=15, ratio=0.001).dehaze((img/255.0).astype(dtype=np.float32))
+    A, inital_transmission = DCP.DarkChannelPrior(wsize=15, ratio=0.001).dehaze((img).astype(dtype=np.float32))
     b, g, r = cv2.split(img)
+    b = 1.0 - b / A[0]
+    g = 1.0 - g / A[1]
+    r = 1.0 - r / A[2]
     b_output, b_trans_map = VariationalModel(inital_transmission, 0.1, 0.1, 0.1, 10).optimization(b)
     g_output, g_trans_map = VariationalModel(inital_transmission, 0.1, 0.1, 0.1, 10).optimization(g)
     r_output, r_trans_map = VariationalModel(inital_transmission, 0.1, 0.1, 0.1, 10).optimization(r)
+    b_output = A[0] * (1. - b_output)
+    g_output = A[1] * (1. - g_output)
+    r_output = A[2] * (1. - r_output)
     output = cv2.merge((b_output, g_output, r_output))
-    cv2.imshow("result", output)
+    output = np.maximum(np.minimum(output, 255.), 0.0)
+    cv2.imshow("result", output.astype(dtype=np.uint8))
     cv2.imshow("trans", ((b_trans_map + g_trans_map + r_trans_map)/3.0))
-    #cv2.imshow("init", inital_transmission)
+    cv2.imshow("init", inital_transmission)
     #cv2.imshow("b_result", b_trans_map)
     #cv2.imshow("g_result", g_trans_map)
     #cv2.imshow("r_result", r_trans_map)
